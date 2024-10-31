@@ -65,7 +65,7 @@ kubectl -n kube-system rollout restart deployment coredns
 - Start by creating namespaces
 - To monitor workloads externally, create storage class, persistent volume, and persistent volume claim
 - To map the external database address and port, create a service and endpoint, then enter the service name in the host name of the config map
-  - configmap setting
+  - configuration file setting for a configmap
 ```YAML
 db:
   default: pgsql
