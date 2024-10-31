@@ -65,14 +65,15 @@ kubectl -n kube-system rollout restart deployment coredns
 - Start by creating namespaces
 - To monitor workloads externally, create storage class, persistent volume, and persistent volume claim
 - To map the external database address and port, create a service and endpoint, then enter the service name in the host name of the config map
-  - configuration file setting for a configmap
+- configuration file setting for a configmap
 ```YAML
 db:
   default: pgsql
   pgsql_option:
     db_host: aiops-db-connection-svc
 ```
-  - Service and Endpoint setting
+
+- Service and Endpoint setting
 ```YAML
 apiVersion: v1
 kind: Service
@@ -98,6 +99,7 @@ subsets:
     port: 15432
     protocol: TCP
 ```
+
 - When creating a persistent volume, set node affinity and specify a storage location for external access
 ```YAML
 spec:
@@ -118,6 +120,7 @@ spec:
           values:
           - dev-ubuntu
 ```
+
 - If the external mapping path is different, create a separate persistent volume
 ```YAML
 spec:
@@ -165,7 +168,8 @@ spec:
 - However, keep in mind that there are differences when configuring persistent volumes
 - When configuring a Deployment, all storage class, persistent volume, and persistent volume claim must be pre-created and the persistent volume claim must be mapped
 - On the other hand, when configuring a StatefulSet, it is recommended to create the storage class and persistent volume first, then map the storage class, in which case the persistent volume claim is automatically created accordingly
-  - Deployment
+
+- Deployment
 ```YAML
 volumes:
   - name: aiops-storage6
@@ -184,7 +188,8 @@ affinity:
           values:
           - dev-ubuntu
 ```
-  - StatefulSet
+
+- StatefulSet
 ```YAML
 volumeClaimTemplates:
 - metadata:
