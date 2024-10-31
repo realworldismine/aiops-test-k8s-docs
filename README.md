@@ -1,6 +1,8 @@
 # aiops-test-k8s-docs
+## Introduciton
+- This document describes the Kubernetes setup for creating a test environment for an internally developed application.
 
-## Intial Setting
+## Initial Setting
 ### Worker Node Connection
 - Add Kubernetes and containerd settings and restart
   - Ensure that the filesystem is overlay2
