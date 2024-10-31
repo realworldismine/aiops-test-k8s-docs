@@ -1,42 +1,206 @@
 # aiops-test-k8s-docs
 
 ## Intial Setting
+### Worker Node Connection
+- Add Kubernetes and containerd settings and restart
+  - Ensure that the filesystem is overlay2
+  - Set swap off
+```SHELL
+swapoff -a
+sed -i '/swap/s/^/#/' /etc/fstab
+```
+  - Save the default containerd settings to config.toml, then change the following value
+```TOML
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  SystemdCgroup = true
+```
+  - Set sysctl and install modules
+```SHELL
+root@dev-ubuntu:~# vi /etc/modules-load.d/k8s.conf
+br_netfilter
 
-### Worker Node 연결
-- kubeadm token 발급 후 join
-- k8s, containerd 설정 추가 및 재시작
+root@dev-ubuntu:~# vi /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-arptables = 1
+net.ipv4.ip_forward = 1
 
-### 배포 관련 참고사항
-- workload를 control-plain에는 절대 배포하지 말자
-- kube-proxy는 한번씩 재확인하자
-- coredns를 rollout해서 다시 시작하자
+root@dev-ubuntu:~# sysctl --system
 
-### Docker container 생성 및 배포
-- 생각보다 많이 애먹었음
-- 필요한 패키지는 apt-get update 후 설치
-- python 가상환경 꼭 만들고 pip 업그레이드 하기
-- wheel부터 설치
-- Timezone은 UTC+0 으로 설정되어 있으므로 로컬 시간 반드시 적용
-- 빌드 후 Docker hub에 배포하기
+root@dev-ubuntu:~# apt-get install -y apt-transport-https ca-certificates curl
 
-### Docker 자체 실행
-- 실행 시, config 정보를 가져올 파일 지정
-- 외부에서 볼 수 있도록 주요 디렉터리 매핑
-- Docker 설정 내부에서 아무리 외부 DB 주소 입력해봤자, local 네트워크에서는 인식 안됨, 반드시 주소 매핑 필요
+root@dev-ubuntu:~# curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes.gpg
+root@dev-ubuntu:~# echo "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-### Kubernetes 환경 구성
-- 네임스페이스부터 만들자
-- 워크로드 외부에서 모니터링하려면 sc, pv, pvc부터 만들 것
-- 외부 DB 주소 및 포트 매핑하려면 svc, ep 만든 후, svc 이름을 cm의 호스트명에 입력할 것
-- pv 만들 때 노드 어피니티 지정하고, 외부 접근을 위한 저장소를 지정하자
-- pvc는 만들어서 pv와 연결해도 되고, 워크로드에서 템플릿 만들고 sc를 입력하면 파드 생성 시 sc에 있는 pv하고 연결할 pvc를 자동으로 생성함
-- 외부 매핑 경로가 전혀 다를 경우 pv를 따로 만들어야 함
+root@dev-ubuntu:~# apt-get update
+root@dev-ubuntu:~# apt-get install -y kubelet kubeadm kubectl
+root@dev-ubuntu:~# apt-mark hold kubelet kubeadm kubectl
+```
+- Issue a kubeadm token and join
 
-### 워크로드 구성
-- 컨테이너 이미지는 항상 가져오는 식으로 구성(프로그램 따라 다름)
-- 컨테이너 별 request, limit은 항상 설정하자
-- volume mount할 때 pv별로 지정하고, 하위 경로는 subPath로 설정하자
-- volume mount 시 cm도 매핑 가능, cm 변수명을 subPath로 하고 실제 경로를 매핑시킬것
-- configmap에서 적용할 데이터 지정할 것
-- volume 지정 시 pv 또는 cm 입력
-- 노드 지정은 필요하면 반드시 할 것
+### Deployment Notes
+- Never deploy workloads on the control plane
+- Always double-check kube-proxy
+- Roll out coredns and restart
+```SHELL
+kubectl -n kube-system rollout restart deployment coredns
+```
+
+### Docker Container Creation and Deployment
+- It was more challenging than expected
+- Run `apt-get update` before installing required packages
+- Create a Python virtual environment and upgrade `pip`
+- Install `wheel` first
+- Timezone is set to UTC+0, so make sure to apply local time
+- Deploy to Docker Hub after building
+- Do not use Windows Docker, even if the hardware requirements are met, the system may shut down unexpectedly
+
+### Docker Execution
+- Specify the configuration file to use during execution
+- Map main directories for external visibility
+- The external database address is recognized correctly inside Docker settings
+- However, if the Docker image is used in Kubernetes, the external database address is not recognized in the local network, so address mapping is required
+
+### Kubernetes Environment Setup
+- Start by creating namespaces
+- To monitor workloads externally, create storage class, persistent volume, and persistent volume claim
+- To map the external database address and port, create a service and endpoint, then enter the service name in the host name of the config map
+  - configmap setting
+```YAML
+db:
+  default: pgsql
+  pgsql_option:
+    db_host: aiops-db-connection-svc
+```
+  - Service and Endpoint setting
+```YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-db-connection-svc
+spec:
+  type: ClusterIP
+  ports:
+  - name: dockerport
+    port: 15432
+    targetPort: 15432
+
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: aiops-db-connection-svc
+subsets:
+- addresses:
+  - ip: 192.168.0.42
+  ports:
+  - name: dockerport
+    port: 15432
+    protocol: TCP
+```
+- When creating a persistent volume, set node affinity and specify a storage location for external access
+```YAML
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  storageClassName: collector-storage
+  local:
+    path: /aiops-container/6/data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - dev-ubuntu
+```
+- If the external mapping path is different, create a separate persistent volume
+```YAML
+spec:
+  containers:
+  - name: collector-container
+    image: onikaze/acollector:main
+    volumeMounts:
+    - name: collector-volume
+      mountPath: /app/data
+    - name: collector-main-volume
+      mountPath: /app/archive
+      subPath: archive
+...
+  volumeClaimTemplates:
+  - metadata:
+      name: collector-volume
+    spec:
+      accessModes: ["ReadWriteMany"]
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: collector-storage
+  - metadata:
+      name: collector-main-volume
+    spec:
+      accessModes: ["ReadWriteMany"]
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: collector-main-storage
+```
+
+### Workload Configuration
+- Always set the container image to be pulled (depends on the program)
+- It is a principle to always set request and limit for each container, but these are temporarily not set due to memory errors on insufficient PC resources
+- When mounting a volume, specify each persistent volume, and set subPath for subdirectories
+- Config maps can also be mapped when mounting volumes, set the config map variable name as subPath and map the actual path
+- Specify the data to apply in the config map
+- Enter the persistent volume or config map when specifying volumes
+- Assign nodes if needed
+
+### Deployment & StatefulSet
+- The main AIOps application is configured with Deployment, and the AIOps collector application is configured with StatefulSet
+- It is okay to configure both as either Deployment or StatefulSet
+- However, keep in mind that there are differences when configuring persistent volumes
+- When configuring a Deployment, all storage class, persistent volume, and persistent volume claim must be pre-created and the persistent volume claim must be mapped
+- On the other hand, when configuring a StatefulSet, it is recommended to create the storage class and persistent volume first, then map the storage class, in which case the persistent volume claim is automatically created accordingly
+  - Deployment
+```YAML
+volumes:
+  - name: aiops-storage6
+    persistentVolumeClaim:
+      claimName: aiops-pvc6
+  - name: aiops-config6
+    configMap:
+      name: aiops-cm-6
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - dev-ubuntu
+```
+  - StatefulSet
+```YAML
+volumeClaimTemplates:
+- metadata:
+    name: collector-volume
+  spec:
+    accessModes: ["ReadWriteMany"]
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: collector-storage
+- metadata:
+    name: collector-main-volume
+  spec:
+    accessModes: ["ReadWriteMany"]
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: collector-main-storage
+```
